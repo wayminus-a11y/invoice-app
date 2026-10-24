@@ -1,0 +1,47 @@
+name: Build APK
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show uploaded files
+        run: ls -R . | grep -v "^./.git" | head -60
+
+      - name: Find project folder
+        id: find
+        run: |
+          S=$(find . -name settings.gradle | head -1)
+          if [ -z "$S" ]; then
+            echo "ERROR: settings.gradle sapadli nahi. Files chukichya jaagi upload zalyat."
+            exit 1
+          fi
+          D=$(dirname "$S")
+          if [ ! -f "$D/app/src/main/AndroidManifest.xml" ]; then
+            echo "ERROR: app/src/main/AndroidManifest.xml sapadli nahi (app folder upload zala nahi)."
+            exit 1
+          fi
+          echo "Project folder: $D"
+          echo "dir=$D" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build debug APK
+        working-directory: ${{ steps.find.outputs.dir }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceManager-APK
+          path: ${{ steps.find.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
