@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.StrictMode;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
@@ -43,6 +44,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(Color.parseColor("#0F172A"));
+        if (Build.VERSION.SDK_INT < 29) {
+            // old Android: allow sharing a plain file:// uri (no FileProvider needed)
+            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().build());
+        }
         web = new WebView(this);
         setContentView(web);
 
@@ -109,6 +114,28 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String shareFile(final String name, final String mime, String base64, String sub) {
+            try {
+                byte[] data = Base64.decode(base64, Base64.DEFAULT);
+                final Uri uri = saveUri(name, mime, data, sub == null ? "" : sub);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Intent i = new Intent(Intent.ACTION_SEND);
+                        i.setType(mime);
+                        i.putExtra(Intent.EXTRA_STREAM, uri);
+                        i.putExtra(Intent.EXTRA_SUBJECT, name);
+                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(Intent.createChooser(i, "Share bill PDF"));
+                    }
+                });
+                return "OK";
+            } catch (Exception e) {
+                return "ERROR: " + e.getMessage();
+            }
+        }
+
+        @JavascriptInterface
         public void printPage() {
             runOnUiThread(new Runnable() {
                 @Override
@@ -123,7 +150,12 @@ public class MainActivity extends Activity {
     }
 
     private String save(String name, String mime, byte[] data, String sub) throws Exception {
-        String shown = "Documents/InvoiceApp/" + (sub.isEmpty() ? "" : sub + "/") + name;
+        saveUri(name, mime, data, sub);
+        return "Documents/InvoiceApp/" + (sub.isEmpty() ? "" : sub + "/") + name;
+    }
+
+    /** Writes the file into Documents/InvoiceApp[/sub] (overwrites same name) and returns its Uri. */
+    private Uri saveUri(String name, String mime, byte[] data, String sub) throws Exception {
         if (Build.VERSION.SDK_INT >= 29) {
             String rel = "Documents/InvoiceApp/" + (sub.isEmpty() ? "" : sub + "/");
             Uri coll = MediaStore.Files.getContentUri("external");
@@ -148,14 +180,16 @@ public class MainActivity extends Activity {
             if (os == null) throw new Exception("Cannot open file");
             os.write(data);
             os.close();
+            return uri;
         } else {
             File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
                     "InvoiceApp" + (sub.isEmpty() ? "" : "/" + sub));
             if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create folder (storage permission?)");
-            FileOutputStream fos = new FileOutputStream(new File(dir, name));
+            File f = new File(dir, name);
+            FileOutputStream fos = new FileOutputStream(f);
             fos.write(data);
             fos.close();
+            return Uri.fromFile(f);
         }
-        return shown;
     }
 }

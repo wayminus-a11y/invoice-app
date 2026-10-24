@@ -474,6 +474,14 @@ async function saveFile(name, mime, bytes, sub) {
 }
 function pdfName(type, e) { return TYPES[type].short + '_' + safeName(e.key) + '_' + safeName(whoOf(type, e.data) || 'bill') + '.pdf'; }
 async function savePDF(type, e) { const bytes = opsToPDF(billOps(type, e.data), TYPES[type].name + ' ' + e.key); return saveFile(pdfName(type, e), 'application/pdf', bytes, 'Bills_PDF'); }
+async function sharePDF(type, e) {
+  const bytes = opsToPDF(billOps(type, e.data), TYPES[type].name + ' ' + e.key), name = pdfName(type, e);
+  if (window.AndroidBridge && AndroidBridge.shareFile) { const r = String(AndroidBridge.shareFile(name, 'application/pdf', toB64(bytes), 'Bills_PDF')); if (r.indexOf('ERROR') === 0) throw new Error(r.slice(6)); return; }
+  const f = new File([bytes], name, { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: name }); } catch (x) { if (x && x.name === 'AbortError') return; throw x; } return; }
+  await saveFile(name, 'application/pdf', bytes, 'Bills_PDF'); toast('Share ithe chalat nahi - PDF save kela', 'good');
+}
+async function doShare(type, e) { try { await sharePDF(type, e); } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); } }
 async function saveXLSX() { return saveFile('Invoice_Registers.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buildXLSX(sheetsFromDB()), ''); }
 async function autoFiles(type, e) {
   const done = [];
@@ -609,7 +617,7 @@ async function addEntry(type) {
   if (!entry) { let mx = 0; DB[type].forEach(e => { const n = parseInt(String(e.id).split('-')[1]); if (n > mx) mx = n; }); entry = { id: T.short + '-' + String(mx + 1).padStart(4, '0'), type, key, data: clone(d), savedAt: new Date().toISOString(), status: 'Saved' }; DB[type].push(entry); }
   persist(); await autoFiles(type, entry); return entry;
 }
-async function onAdd(type) { const e = await addEntry(type); if (!e) return; if (await ask('Entry save zali ✅', 'Print Preview pahaycha ka?', [{ t: 'Preview', c: 'ind' }, { t: 'Nahi', c: 'gh' }]) === 'Preview') go('preview', type, e.id); }
+async function onAdd(type) { const e = await addEntry(type); if (!e) return; const c = await ask('Entry save zali ✅', 'Pudhe kay karaycha?', [{ t: 'Preview', c: 'ind' }, { t: 'Share PDF', c: 'vi' }, { t: 'Nahi', c: 'gh' }]); if (c === 'Preview') go('preview', type, e.id); else if (c === 'Share PDF') await doShare(type, e); }
 async function onPreview(type) {
   const d = getCur(type), key = String(d[TYPES[type].key]).trim(); let e = DB[type].find(x => String(x.key) === key);
   if (!e || JSON.stringify(e.data) !== JSON.stringify(d)) { if (await ask('Aadhi save kara', 'Ha bill register madhe save nahi (kinva badal kela aahe).\nAadhi ADD ENTRY karaychi ka?', [{ t: 'Yes, save', c: 'ok' }, { t: 'Cancel', c: 'gh' }]) !== 'Yes, save') return; e = await addEntry(type); if (!e) return; }
@@ -632,7 +640,7 @@ function screenPreview(type, id) {
   const w = h('div', { class: 'wrap' }); app.append(w);
   w.append(h('div', { class: 'stage' }, h('div', { id: 'printPage', html: opsToSVG(billOps(type, e.data)) })));
   w.append(h('p', { class: 'mute', style: 'text-align:center' }, 'A4 • Print size original sarkhach. Zoom karayla pinch kara.'));
-  app.append(bar(btn('SAVE AS PDF', 'vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
+  app.append(bar(btn('SHARE PDF', 'ok', () => doShare(type, e)), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
 }
 
 /* ----- register ----- */
@@ -654,6 +662,7 @@ function screenReg(type) {
         h('div', { class: 'acts' },
           btn('LOAD TO FORM', 'sm ind', () => { cur[type] = clone(d); DB.drafts[type] = clone(d); persist(); go('form', type); }),
           btn('PREVIEW', 'sm sk', () => go('preview', type, e.id)),
+          btn('SHARE PDF', 'sm ok', () => doShare(type, e)),
           btn('PDF', 'sm vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }),
           btn('DELETE', 'sm ro', async () => { if (await ask('Delete?', e.id + ' (' + T.keyLabel + ' ' + e.key + ') kayamchi delete hoil.', [{ t: 'Delete', c: 'ro' }, { t: 'Cancel', c: 'gh' }]) === 'Delete') { DB[type] = DB[type].filter(x => x.id !== e.id); persist(); if (DB.settings.autoXlsx) saveXLSX().catch(() => { }); screenReg(type); } })));
       list.append(card);
