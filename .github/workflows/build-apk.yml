@@ -9,20 +9,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show uploaded files
-        run: ls -R . | grep -v "^./.git" | head -60
-
       - name: Find project folder
         id: find
         run: |
+          echo "--- uploaded files ---"
+          find . -path ./.git -prune -o -type f -print | head -60
           S=$(find . -name settings.gradle | head -1)
           if [ -z "$S" ]; then
             echo "ERROR: settings.gradle sapadli nahi. Files chukichya jaagi upload zalyat."
+            echo "## BUILD FAILED: settings.gradle sapadli nahi (files chukichya jaagi upload zalyat)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           D=$(dirname "$S")
           if [ ! -f "$D/app/src/main/AndroidManifest.xml" ]; then
-            echo "ERROR: app/src/main/AndroidManifest.xml sapadli nahi (app folder upload zala nahi)."
+            echo "ERROR: app/src/main/AndroidManifest.xml sapadli nahi."
+            echo "## BUILD FAILED: app/src/main/AndroidManifest.xml sapadli nahi (app folder upload zala nahi)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "Project folder: $D"
@@ -39,9 +40,35 @@ jobs:
 
       - name: Build debug APK
         working-directory: ${{ steps.find.outputs.dir }}
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Show error summary (only if build failed)
+        if: failure()
+        run: |
+          {
+            echo "## BUILD FAILED - khali cha text copy karun mala pathva"
+            echo '```'
+            if [ -f build.log ]; then
+              grep -n -E "error:|What went wrong|Execution failed|FAILURE|Caused by|Could not|not found|SDK location|license" build.log | head -40
+              echo "----- last lines -----"
+              tail -n 25 build.log
+            else
+              echo "build.log nahi (build suru hoyachya aadhich fail zala)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
           name: InvoiceManager-APK
           path: ${{ steps.find.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
