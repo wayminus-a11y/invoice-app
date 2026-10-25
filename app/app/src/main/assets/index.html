@@ -173,10 +173,10 @@ function wrapText(str, fk, pt, maxw) {
 }
 
 /* ---------- layout engine: template + data -> drawing ops (page mm) ---------- */
-function buildOps(type, map) {
+function buildOps(type, map, lay) {
   const T = TPL[type], dyn = new Set(T.dyn);
-  const s = Math.min(1, (PAGE_W - 10.16) / T.w, (PAGE_H - 10.16) / T.h);
-  const ox = (PAGE_W - T.w * s) / 2, oy = 5.08;
+  const s = lay ? lay.s : Math.min(1, (PAGE_W - 10.16) / T.w, (PAGE_H - 10.16) / T.h);
+  const ox = (PAGE_W - T.w * s) / 2, oy = lay ? lay.oy : 5.08;
   const X = x => ox + x * s, Y = y => oy + y * s;
   const cells = T.cells.map(c => {
     const o = Object.assign({}, c);
@@ -223,6 +223,21 @@ function buildOps(type, map) {
   });
   const ops = fills.concat(lines, texts);
   if (T.img) ops.push({ k: 'i', x: X(T.img.x), y: Y(T.img.y), w: T.img.w * s, h: T.img.h * s });
+  return ops;
+}
+
+/* several slips of one type on a single A4 page (1 = normal, 2 = full size, 3 = scaled to fit) */
+function buildMultiOps(type, maps) {
+  const n = maps.length, T = TPL[type];
+  if (n <= 1) return buildOps(type, maps[0]);
+  const gap = 4, avail = PAGE_H - 10.16 - gap * (n - 1);
+  const s = Math.min(1, (PAGE_W - 10.16) / T.w, avail / n / T.h), hh = T.h * s;
+  let ops = [];
+  maps.forEach((m, i) => {
+    const oy = 5.08 + i * (hh + gap);
+    ops = ops.concat(buildOps(type, m, { s, oy }));
+    if (i < n - 1) { const y = oy + hh + gap / 2; ops.push({ k: 'l', x1: 8, y1: y, x2: PAGE_W - 8, y2: y, w: 0.15, c: 'AAAAAA' }); }
+  });
   return ops;
 }
 
@@ -446,6 +461,11 @@ function mapCells(type, d) {
   return M;
 }
 function billOps(type, d) { return buildOps(type, mapCells(type, d)); }
+let sel = [];   // DK entries ticked for 'same page' printing (max 3)
+function multiEntries(ids) { return ids.map(i => DB.dk.find(x => x.id === i)).filter(Boolean); }
+function multiOps(es) { return buildMultiOps('dk', es.map(e => mapCells('dk', e.data))); }
+function multiName(es) { return 'DK_' + es.map(e => safeName(e.key)).join('_') + '_samepage.pdf'; }
+function multiBytes(es) { return opsToPDF(multiOps(es), 'Dharam Kata ' + es.map(e => e.key).join(', ')); }
 function whoOf(type, d) { return type === 'dk' ? d.customer : type === 'sb' ? d.party : d.name; }
 function amountOf(type, d) { return type === 'dk' ? calcDK(d).chT : type === 'sb' ? calcSB(d, DB.settings.lakh).total : calcTT(d).total; }
 
@@ -478,6 +498,12 @@ function pdfName(type, e) { return TYPES[type].short + '_' + safeName(e.key) + '
 async function savePDF(type, e) { const bytes = opsToPDF(billOps(type, e.data), TYPES[type].name + ' ' + e.key); return saveFile(pdfName(type, e), 'application/pdf', bytes, 'Bills_PDF'); }
 async function sharePDF(type, e) {
   const bytes = opsToPDF(billOps(type, e.data), TYPES[type].name + ' ' + e.key), name = pdfName(type, e);
+  if (window.AndroidBridge && AndroidBridge.shareFile) { const r = String(AndroidBridge.shareFile(name, 'application/pdf', toB64(bytes), 'Bills_PDF')); if (r.indexOf('ERROR') === 0) throw new Error(r.slice(6)); return; }
+  const f = new File([bytes], name, { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: name }); } catch (x) { if (x && x.name === 'AbortError') return; throw x; } return; }
+  await saveFile(name, 'application/pdf', bytes, 'Bills_PDF'); toast('Share ithe chalat nahi - PDF save kela', 'good');
+}
+async function shareBytes(name, bytes) {
   if (window.AndroidBridge && AndroidBridge.shareFile) { const r = String(AndroidBridge.shareFile(name, 'application/pdf', toB64(bytes), 'Bills_PDF')); if (r.indexOf('ERROR') === 0) throw new Error(r.slice(6)); return; }
   const f = new File([bytes], name, { type: 'application/pdf' });
   if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: name }); } catch (x) { if (x && x.name === 'AbortError') return; throw x; } return; }
@@ -643,6 +669,17 @@ function screenPreview(type, id) {
   w.append(h('div', { class: 'stage' }, h('div', { id: 'printPage', html: opsToSVG(billOps(type, e.data)) })));
   w.append(h('p', { class: 'mute', style: 'text-align:center' }, 'A4 • Print size original sarkhach. Zoom karayla pinch kara.'));
   app.append(bar(btn('SHARE PDF', 'ok', () => doShare(type, e)), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
+  if (type === 'dk') w.append(h('div', { style: 'text-align:center;margin:8px 0' }, btn('＋ ADD 2nd / 3rd BILL ON SAME PAGE', 'sm ind', () => { sel = [e.id]; go('reg', 'dk'); })));
+}
+
+function screenMulti(ids) {
+  const es = multiEntries(ids.split(',')); theme('dk'); const T = TYPES.dk, app = $('#app'); app.innerHTML = '';
+  if (!es.length) { go('reg', 'dk'); return; }
+  app.append(topbar('Same Page Preview', es.length + ' bills • ' + es.map(e => 'RST ' + e.key).join(', '), [T.c, T.c2], { t: '←', fn: () => history.back() }));
+  const w = h('div', { class: 'wrap' }); app.append(w);
+  w.append(h('div', { class: 'stage' }, h('div', { id: 'printPage', html: opsToSVG(multiOps(es)) })));
+  w.append(h('p', { class: 'mute', style: 'text-align:center' }, 'Ek A4 page var ' + es.length + ' bills. Zoom karayla pinch kara.'));
+  app.append(bar(btn('SHARE PDF', 'ok', async () => { try { await shareBytes(multiName(es), multiBytes(es)); } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); } }), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await saveFile(multiName(es), 'application/pdf', multiBytes(es), 'Bills_PDF'), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
 }
 
 /* ----- register ----- */
@@ -659,7 +696,7 @@ function screenReg(type) {
     arr.forEach(e => {
       const d = e.data, dt = type === 'dk' ? d.gDate : type === 'sb' ? d.invoiceDate : d.date;
       const amtTxt = type === 'dk' ? (calcDK(d).net + ' kg') : '₹ ' + money(amountOf(type, d));
-      const card = h('div', { class: 'entry', style: '--ac:' + T.c }, h('div', { class: 'l1', onclick: () => card.classList.toggle('open') }, h('span', {}, T.keyLabel + ' ' + e.key, h('span', { class: 'tag' }, e.id), e.status !== 'Saved' ? h('span', { class: 'tag' }, e.status) : null), h('span', { style: 'color:' + T.c2 }, amtTxt)),
+      const card = h('div', { class: 'entry', style: '--ac:' + T.c }, h('div', { class: 'l1', onclick: () => card.classList.toggle('open') }, h('span', {}, type === 'dk' ? h('input', { type: 'checkbox', checked: sel.includes(e.id), style: 'width:22px;height:22px;margin-right:8px;vertical-align:middle', onclick: ev => ev.stopPropagation(), onchange: ev => { if (ev.target.checked) { if (sel.length >= 3) { ev.target.checked = false; toast('Ek page var max 3 bills', 'err'); return; } sel.push(e.id); } else sel = sel.filter(x => x !== e.id); upd(); } }) : null, T.keyLabel + ' ' + e.key, h('span', { class: 'tag' }, e.id), e.status !== 'Saved' ? h('span', { class: 'tag' }, e.status) : null), h('span', { style: 'color:' + T.c2 }, amtTxt)),
         h('div', { class: 'l2', onclick: () => card.classList.toggle('open') }, (whoOf(type, d) || '—') + ' • ' + dmy(dt) + (type === 'dk' && d.vehicle ? ' • ' + d.vehicle : '')),
         h('div', { class: 'acts' },
           btn('LOAD TO FORM', 'sm ind', () => { cur[type] = clone(d); DB.drafts[type] = clone(d); persist(); go('form', type); }),
@@ -671,7 +708,9 @@ function screenReg(type) {
     });
   };
   q.addEventListener('input', draw); draw();
-  app.append(bar(btn('＋ NEW BILL', 'ok', () => go('form', type)), btn('HOME', 'gh', () => go('home'))));
+  const mb = btn('SAME PAGE (0)', 'vi', () => { if (!sel.length) { toast('Aadhi 1 te 3 bills tick kara', 'err'); return; } go('multi', sel.join(',')); });
+  const upd = () => { mb.textContent = 'SAME PAGE (' + sel.length + ')'; }; upd();
+  app.append(bar(btn('＋ NEW BILL', 'ok', () => go('form', type)), type === 'dk' ? mb : null, btn('HOME', 'gh', () => go('home'))));
 }
 
 /* ----- settings ----- */
@@ -690,7 +729,7 @@ function screenSettings() {
 function route() {
   const p = (location.hash || '#/home').replace(/^#\//, '').split('/'); $$('.modal,.toast').forEach(x => x.remove()); liveEl = null;
   const [s, a, b] = p; window.scrollTo(0, 0);
-  if (s === 'form' && TYPES[a]) screenForm(a); else if (s === 'reg' && TYPES[a]) screenReg(a); else if (s === 'preview' && TYPES[a]) screenPreview(a, b); else if (s === 'settings') screenSettings(); else screenHome();
+  if (s === 'form' && TYPES[a]) screenForm(a); else if (s === 'reg' && TYPES[a]) screenReg(a); else if (s === 'multi' && a) screenMulti(a); else if (s === 'preview' && TYPES[a]) screenPreview(a, b); else if (s === 'settings') screenSettings(); else screenHome();
 }
 window.addEventListener('hashchange', route);
 loadDB(); route();
