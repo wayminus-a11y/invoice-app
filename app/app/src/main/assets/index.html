@@ -39,7 +39,7 @@ label.f input:focus,label.f select:focus,label.f textarea:focus{border-color:var
 .item .ih{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:700}
 .item .amt{color:var(--ok);font-weight:700}
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#fffffff2;backdrop-filter:blur(8px);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;justify-content:center}
-.bar .btn{flex:1;max-width:220px;padding:13px 6px;font-size:14px}
+.bar .btn{flex:1;max-width:220px;padding:13px 4px;font-size:13px}
 .entry{background:var(--card);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 8px #0f172a10;border-left:6px solid var(--ac)}
 .entry .l1{display:flex;justify-content:space-between;font-weight:700}.entry .l2{color:var(--mute);font-size:13px;margin-top:2px}
 .entry .acts{display:none;gap:8px;margin-top:10px;flex-wrap:wrap}.entry.open .acts{display:flex}
@@ -551,6 +551,7 @@ function screenHome() {
       h('div', { class: 'bstats' }, h('div', {}, h('b', { style: 'color:' + T.c }, String(DB[t].length)), h('small', {}, 'Entries')), h('div', {}, h('b', { style: 'color:' + T.c2, class: 'tot' }, t === 'dk' ? Math.round(tot).toLocaleString('en-IN') : money(tot)), h('small', {}, t === 'dk' ? 'Total Net Kg' : 'Total Rs.'))),
       h('div', { class: 'bact' }, btn('＋ NEW BILL', 'f', () => go('form', t), { style: `background:${T.c}` }), btn('REGISTER', 'f sl', () => go('reg', t)))));
   });
+  w.append(h('p', { class: 'mute', style: 'text-align:center;margin-top:10px' }, 'App version 8 • Dharam Kata: ADD ITEM = same page var 2nd/3rd bill'));
   w.append(h('div', { class: 'sec', style: 'margin-top:14px' }, h('h3', {}, 'Backup'), h('div', { class: 'grid' }, btn('💾 Save backup (XLSX)', 'ok', async () => { try { toast('Saved: ' + await saveXLSX(), 'good'); } catch (e) { toast(e.message, 'err'); } }), btn('📥 Restore backup', 'ind', restorePick)), h('p', { class: 'mute' }, 'Backup file madhe sarv entries + bill data astat. Phone badalla tar "Restore backup" ne parat milte.')));
 }
 function restorePick() {
@@ -598,11 +599,18 @@ function refresh(type) {
   else if (type === 'sb') { const c = calcSB(d, DB.settings.lakh); liveEl.innerHTML = `<small>TOTAL AMOUNT</small><b>₹ ${money(c.total)}</b><em>${esc(c.words)}${c.lines.length > MAXLINES.sb ? ' &nbsp; ⚠️ Lines ' + c.lines.length + '/' + MAXLINES.sb : ''}</em>`; }
   else { const c = calcTT(d); liveEl.innerHTML = `<small>TOTAL</small><b>₹ ${money(c.total)}</b><em>${c.lines.length > MAXLINES.tt ? '⚠️ Lines ' + c.lines.length + '/' + MAXLINES.tt : 'Subtotal ' + money(c.sub)}</em>`; }
 }
+function addBill2() {
+  const d = getCur('dk'), ex = d.extra = d.extra || [];
+  if (ex.length >= 2) { toast('Ek page var max 3 bills', 'err'); return; }
+  const b = clone(core(d)), last = ex.length ? ex[ex.length - 1] : d; b.rst = String((parseFloat(last.rst) || parseFloat(nextKey('dk')) - 1) + 1); ex.push(b); saveDraft('dk'); screenForm('dk');
+  setTimeout(() => { const s = document.getElementById('bill' + (ex.length + 1)); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
+}
 function screenForm(type) {
   const T = TYPES[type]; theme(type); const d = getCur(type); const app = $('#app'); app.innerHTML = '';
   app.append(topbar(T.name, 'Bill entry', [T.c, T.c2], { t: '←', fn: () => go('home') }, h('button', { class: 'ib', onclick: () => go('reg', type) }, '📒')));
   const w = h('div', { class: 'wrap' }); app.append(w);
   liveEl = h('div', { class: 'big' }); w.append(liveEl);
+  if (type === 'dk') w.append(h('div', { style: 'margin:6px 0 10px' }, btn('＋ ADD ITEM  (2nd / 3rd bill same page var)' + (d.extra && d.extra.length ? '  [' + (d.extra.length + 1) + ' bills]' : ''), 'sm ind', addBill2, { style: 'width:100%' })));
   const sec = (title, ...kids) => w.append(h('div', { class: 'sec' }, h('h3', {}, title), h('div', { class: 'grid' }, kids)));
   const nowBtn = (a, b) => h('button', { class: 'btn sm sl', style: 'align-self:end;margin-bottom:2px', onclick: () => { d[a] = todayISO(); d[b] = nowTime(); saveDraft(type); screenForm(type); } }, 'NOW');
   if (type === 'dk') {
@@ -612,13 +620,13 @@ function screenForm(type) {
     sec('Charges', fld(type, 'ch1', 'Charges (1) Rs.', { im: 'decimal' }), fld(type, 'ch2', 'Charges (2) Rs.', { im: 'decimal' }), fld(type, 'remarks', 'Operator / Remarks (register madhe)', { full: 1 }));
     const ex = d.extra = d.extra || [];
     ex.forEach((x, i) => {
-      w.append(h('div', { class: 'sec' }, h('h3', {}, 'Bill ' + (i + 2) + ' (same page var khali)'), h('div', { class: 'grid' },
+      w.append(h('div', { class: 'sec', id: 'bill' + (i + 2) }, h('h3', {}, 'Bill ' + (i + 2) + ' (same page var khali)'), h('div', { class: 'grid' },
         fld(type, 'rst', 'RST No', { im: 'numeric', full: 1, d: x }), fld(type, 'customer', 'Customer', { full: 1, d: x }), fld(type, 'mobile', 'Mobile No', { type: 'tel', im: 'tel', full: 1, d: x }), fld(type, 'vehicle', 'Vehicle No', { up: 1, d: x }), fld(type, 'material', 'Material', { d: x }),
         fld(type, 'gross', 'Gross Wt (kg)', { im: 'decimal', d: x }), fld(type, 'tare', 'Tare Wt (kg)', { im: 'decimal', d: x }), fld(type, 'gDate', 'Gross Date', { type: 'date', d: x }), fld(type, 'gTime', 'Gross Time', { type: 'time', d: x }), fld(type, 'tDate', 'Tare Date', { type: 'date', d: x }), fld(type, 'tTime', 'Tare Time', { type: 'time', d: x }),
         fld(type, 'ch1', 'Charges (1) Rs.', { im: 'decimal', d: x }), fld(type, 'ch2', 'Charges (2) Rs.', { im: 'decimal', d: x })),
         h('div', { style: 'margin-top:8px' }, btn('✕ REMOVE BILL ' + (i + 2), 'sm ro', () => { ex.splice(i, 1); saveDraft(type); screenForm(type); }))));
     });
-    if (ex.length < 2) w.append(btn('＋ ADD ITEM (Bill ' + (ex.length + 2) + ' same page var)', 'ind f', () => { const b = clone(core(d)), last = ex.length ? ex[ex.length - 1] : d; b.rst = String((parseFloat(last.rst) || parseFloat(nextKey('dk')) - 1) + 1); ex.push(b); saveDraft(type); screenForm(type); window.scrollTo(0, document.body.scrollHeight); }, { style: 'width:100%;margin:8px 0' }));
+    if (ex.length < 2) w.append(btn('＋ ADD ITEM (Bill ' + (ex.length + 2) + ' same page var)', 'ind f', addBill2, { style: 'width:100%;margin:8px 0' }));
   } else if (type === 'sb') {
     sec('Party', fld(type, 'party', 'Party name', { full: 1 }), fld(type, 'addr1', 'Address line 1', { full: 1 }), fld(type, 'addr2', 'Address line 2', { full: 1 }), fld(type, 'gstin', 'GSTIN/UIN', { full: 1, up: 1 }));
     sec('Invoice', fld(type, 'challan', 'Challan No', { im: 'numeric' }), fld(type, 'challanDate', 'Challan date', { type: 'date' }), fld(type, 'invoice', 'Invoice No', { im: 'numeric' }), fld(type, 'invoiceDate', 'Invoice date', { type: 'date' }), fld(type, 'lr', 'L.R. No'), fld(type, 'lrDate', 'L.R. date', { type: 'date' }), fld(type, 'transport', 'Transport'), fld(type, 'article', 'Article (vehicle no)', { up: 1 }));
@@ -630,7 +638,7 @@ function screenForm(type) {
     w.append(h('div', { class: 'sec' }, h('h3', {}, 'Items'), itemsEditor(type)));
   }
   refresh(type);
-  app.append(bar(btn('ADD ENTRY', 'ok', () => onAdd(type)), btn('PRINT PREVIEW', 'ind', () => onPreview(type)), btn('NEW ENTRY', 'am', () => onNew(type))));
+  app.append(bar(btn('ADD ENTRY', 'ok', () => onAdd(type)), type === 'dk' ? btn('＋ ITEM', 'vi', addBill2) : null, btn('PRINT PREVIEW', 'ind', () => onPreview(type)), btn('NEW ENTRY', 'am', () => onNew(type))));
 }
 function validate(type, dd) {
   const d = dd || getCur(type), T = TYPES[type];
