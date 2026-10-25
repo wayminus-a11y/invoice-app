@@ -126,7 +126,7 @@ public class MainActivity extends Activity {
                         i.putExtra(Intent.EXTRA_STREAM, uri);
                         i.putExtra(Intent.EXTRA_SUBJECT, name);
                         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        startActivity(Intent.createChooser(i, "Share bill PDF"));
+                        startActivity(Intent.createChooser(i, "Share bill"));
                     }
                 });
                 return "OK";
@@ -157,8 +157,9 @@ public class MainActivity extends Activity {
     /** Writes the file into Documents/InvoiceApp[/sub] (overwrites same name) and returns its Uri. */
     private Uri saveUri(String name, String mime, byte[] data, String sub) throws Exception {
         if (Build.VERSION.SDK_INT >= 29) {
-            String rel = "Documents/InvoiceApp/" + (sub.isEmpty() ? "" : sub + "/");
-            Uri coll = MediaStore.Files.getContentUri("external");
+            boolean isImg = mime != null && mime.startsWith("image/");
+            String rel = (isImg ? "Pictures/InvoiceApp/" : "Documents/InvoiceApp/") + (sub.isEmpty() ? "" : sub + "/");
+            Uri coll = isImg ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Files.getContentUri("external");
             Uri uri = null;
             Cursor c = getContentResolver().query(coll,
                     new String[]{MediaStore.MediaColumns._ID},

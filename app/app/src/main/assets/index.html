@@ -504,13 +504,34 @@ async function sharePDF(type, e) {
   if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: name }); } catch (x) { if (x && x.name === 'AbortError') return; throw x; } return; }
   await saveFile(name, 'application/pdf', bytes, 'Bills_PDF'); toast('Share ithe chalat nahi - PDF save kela', 'good');
 }
-async function shareBytes(name, bytes) {
-  if (window.AndroidBridge && AndroidBridge.shareFile) { const r = String(AndroidBridge.shareFile(name, 'application/pdf', toB64(bytes), 'Bills_PDF')); if (r.indexOf('ERROR') === 0) throw new Error(r.slice(6)); return; }
-  const f = new File([bytes], name, { type: 'application/pdf' });
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+async function shareBytes(name, bytes, mime, sub) {
+  mime = mime || 'application/pdf'; sub = sub == null ? 'Bills_PDF' : sub;
+  if (window.AndroidBridge && AndroidBridge.shareFile) { const r = String(AndroidBridge.shareFile(name, mime, toB64(bytes), sub)); if (r.indexOf('ERROR') === 0) throw new Error(r.slice(6)); return; }
+  const f = new File([bytes], name, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: name }); } catch (x) { if (x && x.name === 'AbortError') return; throw x; } return; }
-  await saveFile(name, 'application/pdf', bytes, 'Bills_PDF'); toast('Share ithe chalat nahi - PDF save kela', 'good');
+  await saveFile(name, mime, bytes, sub); toast('Share ithe chalat nahi - file save keli', 'good');
 }
-async function doShare(type, e) { try { await sharePDF(type, e); } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); } }
+function opsBottom(ops) { let b = 20; ops.forEach(p => { const y = p.k === 'l' ? Math.max(p.y1, p.y2) : p.k === 't' ? p.y + 2 : p.y + (p.h || 0); if (y > b) b = y; }); return Math.min(PAGE_H, b + 6); }
+async function pngBytes(ops) {
+  const url = URL.createObjectURL(new Blob([opsToSVG(ops)], { type: 'image/svg+xml' })), img = new Image();
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error('Image tayar hot nahi')); img.src = url; });
+  const W = 1240, H = Math.round(W * opsBottom(ops) / PAGE_W), full = Math.round(W * PAGE_H / PAGE_W), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.drawImage(img, 0, 0, W, full); URL.revokeObjectURL(url);
+  const b = await new Promise(r => c.toBlob(r, 'image/png')); if (!b) throw new Error('Image tayar hot nahi');
+  return new Uint8Array(await b.arrayBuffer());
+}
+/* one SHARE button -> PDF / Image / Excel */
+async function shareMenu(base, getOps, getPdf) {
+  const c = await ask('Share', 'Konta format share karaycha?', [{ t: 'PDF', c: 'ok' }, { t: 'Image (PNG)', c: 'vi' }, { t: 'Excel (XLSX)', c: 'ind' }, { t: 'Cancel', c: 'gh' }]);
+  try {
+    if (c === 'PDF') await shareBytes(base + '.pdf', getPdf(), 'application/pdf', 'Bills_PDF');
+    else if (c === 'Image (PNG)') await shareBytes(base + '.png', await pngBytes(getOps()), 'image/png', 'Bills_Image');
+    else if (c === 'Excel (XLSX)') await shareBytes('Invoice_Registers.xlsx', buildXLSX(sheetsFromDB()), XLSX_MIME, '');
+  } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); }
+}
+async function doShare(type, e) { return shareMenu(pdfName(type, e).replace(/\.pdf$/, ''), () => billOps(type, e.data), () => opsToPDF(billOps(type, e.data), TYPES[type].name + ' ' + e.key)); }
+function doShareMulti(es) { return shareMenu(multiName(es).replace(/\.pdf$/, ''), () => multiOps(es), () => multiBytes(es)); }
 async function saveXLSX() { return saveFile('Invoice_Registers.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buildXLSX(sheetsFromDB()), ''); }
 async function autoFiles(type, e) {
   const done = [];
@@ -551,8 +572,8 @@ function screenHome() {
       h('div', { class: 'bstats' }, h('div', {}, h('b', { style: 'color:' + T.c }, String(DB[t].length)), h('small', {}, 'Entries')), h('div', {}, h('b', { style: 'color:' + T.c2, class: 'tot' }, t === 'dk' ? Math.round(tot).toLocaleString('en-IN') : money(tot)), h('small', {}, t === 'dk' ? 'Total Net Kg' : 'Total Rs.'))),
       h('div', { class: 'bact' }, btn('＋ NEW BILL', 'f', () => go('form', t), { style: `background:${T.c}` }), btn('REGISTER', 'f sl', () => go('reg', t)))));
   });
-  w.append(h('p', { class: 'mute', style: 'text-align:center;margin-top:10px' }, 'App version 8 • Dharam Kata: ADD ITEM = same page var 2nd/3rd bill'));
-  w.append(h('div', { class: 'sec', style: 'margin-top:14px' }, h('h3', {}, 'Backup'), h('div', { class: 'grid' }, btn('💾 Save backup (XLSX)', 'ok', async () => { try { toast('Saved: ' + await saveXLSX(), 'good'); } catch (e) { toast(e.message, 'err'); } }), btn('📥 Restore backup', 'ind', restorePick)), h('p', { class: 'mute' }, 'Backup file madhe sarv entries + bill data astat. Phone badalla tar "Restore backup" ne parat milte.')));
+  w.append(h('p', { class: 'mute', style: 'text-align:center;margin-top:10px' }, 'App version 9 • SHARE = PDF / Image / Excel'));
+  w.append(h('div', { class: 'sec', style: 'margin-top:14px' }, h('h3', {}, 'Backup'), h('div', { class: 'grid' }, btn('💾 Save backup (XLSX)', 'ok', async () => { try { toast('Saved: ' + await saveXLSX(), 'good'); } catch (e) { toast(e.message, 'err'); } }), btn('📥 Restore backup', 'ind', restorePick), btn('📤 Share backup (XLSX)', 'vi', async () => { try { await shareBytes('Invoice_Registers.xlsx', buildXLSX(sheetsFromDB()), XLSX_MIME, ''); } catch (e) { toast('Share hot nahi: ' + e.message, 'err'); } })), h('p', { class: 'mute' }, 'Backup file madhe sarv entries + bill data astat. Phone badalla tar "Restore backup" ne parat milte.')));
 }
 function restorePick() {
   const i = h('input', { type: 'file', accept: '.xlsx', style: 'display:none', onchange: async () => {
@@ -669,11 +690,11 @@ async function onAdd(type) {
   for (let i = 0; i < ex.length; i++) { const x = await addEntry('dk', ex[i]); if (!x) { toast('Bill ' + (i + 2) + ' save zali nahi - tapasa', 'err'); break; } ids.push(x.id); }
   if (ids.length > 1) {
     const es = multiEntries(ids); try { if (DB.settings.autoPdf) await saveFile(multiName(es), 'application/pdf', multiBytes(es), 'Bills_PDF'); } catch (x) { }
-    const c = await ask('Entries save zalya ✅', ids.length + ' bills save zalya (Register + Excel). Same page var:', [{ t: 'Preview', c: 'ind' }, { t: 'Share PDF', c: 'vi' }, { t: 'Nahi', c: 'gh' }]);
-    if (c === 'Preview') { sel = ids.slice(); go('multi', ids.join(',')); } else if (c === 'Share PDF') { try { await shareBytes(multiName(es), multiBytes(es)); } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); } }
+    const c = await ask('Entries save zalya ✅', ids.length + ' bills save zalya (Register + Excel). Same page var:', [{ t: 'Preview', c: 'ind' }, { t: 'Share', c: 'vi' }, { t: 'Nahi', c: 'gh' }]);
+    if (c === 'Preview') { sel = ids.slice(); go('multi', ids.join(',')); } else if (c === 'Share') await doShareMulti(es);
     return;
   }
-  const c = await ask('Entry save zali ✅', 'Pudhe kay karaycha?', [{ t: 'Preview', c: 'ind' }, { t: 'Share PDF', c: 'vi' }, { t: 'Nahi', c: 'gh' }]); if (c === 'Preview') go('preview', type, e.id); else if (c === 'Share PDF') await doShare(type, e);
+  const c = await ask('Entry save zali ✅', 'Pudhe kay karaycha?', [{ t: 'Preview', c: 'ind' }, { t: 'Share', c: 'vi' }, { t: 'Nahi', c: 'gh' }]); if (c === 'Preview') go('preview', type, e.id); else if (c === 'Share') await doShare(type, e);
 }
 async function onPreview(type) {
   const d = getCur(type), key = String(d[TYPES[type].key]).trim(); let e = DB[type].find(x => String(x.key) === key);
@@ -697,7 +718,7 @@ function screenPreview(type, id) {
   const w = h('div', { class: 'wrap' }); app.append(w);
   w.append(h('div', { class: 'stage' }, h('div', { id: 'printPage', html: opsToSVG(billOps(type, e.data)) })));
   w.append(h('p', { class: 'mute', style: 'text-align:center' }, 'A4 • Print size original sarkhach. Zoom karayla pinch kara.'));
-  app.append(bar(btn('SHARE PDF', 'ok', () => doShare(type, e)), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
+  app.append(bar(btn('SHARE', 'ok', () => doShare(type, e)), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
   if (type === 'dk') w.append(h('div', { style: 'text-align:center;margin:8px 0' }, btn('＋ ADD 2nd / 3rd BILL ON SAME PAGE', 'sm ind', () => { sel = [e.id]; go('reg', 'dk'); })));
 }
 
@@ -708,7 +729,7 @@ function screenMulti(ids) {
   const w = h('div', { class: 'wrap' }); app.append(w);
   w.append(h('div', { class: 'stage' }, h('div', { id: 'printPage', html: opsToSVG(multiOps(es)) })));
   w.append(h('p', { class: 'mute', style: 'text-align:center' }, 'Ek A4 page var ' + es.length + ' bills. Zoom karayla pinch kara.'));
-  app.append(bar(btn('SHARE PDF', 'ok', async () => { try { await shareBytes(multiName(es), multiBytes(es)); } catch (x) { toast('Share hot nahi: ' + x.message, 'err'); } }), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await saveFile(multiName(es), 'application/pdf', multiBytes(es), 'Bills_PDF'), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
+  app.append(bar(btn('SHARE', 'ok', () => doShareMulti(es)), btn('SAVE PDF', 'vi', async () => { try { toast('Saved: ' + await saveFile(multiName(es), 'application/pdf', multiBytes(es), 'Bills_PDF'), 'good'); } catch (x) { toast(x.message, 'err'); } }), btn('PRINT', 'ind', () => { if (window.AndroidBridge && AndroidBridge.printPage) AndroidBridge.printPage(); else window.print(); }), btn('BACK', 'gh', () => history.back())));
 }
 
 /* ----- register ----- */
@@ -730,7 +751,7 @@ function screenReg(type) {
         h('div', { class: 'acts' },
           btn('LOAD TO FORM', 'sm ind', () => { cur[type] = clone(d); DB.drafts[type] = clone(d); persist(); go('form', type); }),
           btn('PREVIEW', 'sm sk', () => go('preview', type, e.id)),
-          btn('SHARE PDF', 'sm ok', () => doShare(type, e)),
+          btn('SHARE', 'sm ok', () => doShare(type, e)),
           btn('PDF', 'sm vi', async () => { try { toast('Saved: ' + await savePDF(type, e), 'good'); } catch (x) { toast(x.message, 'err'); } }),
           btn('DELETE', 'sm ro', async () => { if (await ask('Delete?', e.id + ' (' + T.keyLabel + ' ' + e.key + ') kayamchi delete hoil.', [{ t: 'Delete', c: 'ro' }, { t: 'Cancel', c: 'gh' }]) === 'Delete') { DB[type] = DB[type].filter(x => x.id !== e.id); persist(); if (DB.settings.autoXlsx) saveXLSX().catch(() => { }); screenReg(type); } })));
       list.append(card);
